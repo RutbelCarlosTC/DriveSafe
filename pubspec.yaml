@@ -2,7 +2,7 @@ name: drive_safety
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: "none" # Remove this line if you wish to publish to pub.dev
 
 # The following defines the version and build number for your application.
 # A version number is three numbers separated by dots, like 1.2.43
@@ -30,13 +30,16 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  
+  firebase_core: ^3.4.0
+  firebase_auth: ^5.2.0
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  mqtt_client: ^10.0.0      # Para MQTT
-  sqflite: ^2.3.0           # O hive para almacenamiento local
-  fl_chart: ^0.65.0         # Para gráficos en Dashboard
+  mqtt_client: ^10.0.0 # Para MQTT
+  sqflite: ^2.3.0 # O hive para almacenamiento local
+  fl_chart: ^0.65.0 # Para gráficos en Dashboard
   sensors_plus: ^3.0.0
   geolocator: ^10.1.0
   shared_preferences: ^2.2.0
@@ -60,7 +63,6 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
-
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.

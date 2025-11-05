@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "713205306159",
+    "project_id": "drivesafe-848b2",
+    "storage_bucket": "drivesafe-848b2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:713205306159:android:ec54fe6011e232fd36c7da",
+        "android_client_info": {
+          "package_name": "com.example.drive_safety"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDLoR3xZHSrWPTb7dwDDQ-pbtvEN2kT4ps"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
