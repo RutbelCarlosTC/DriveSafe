@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'dashboard_screen.dart';
 import 'detection_screen.dart';
 import 'history_screen.dart';
 import 'settings_screen.dart';
+import 'map_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({Key? key}) : super(key: key);
@@ -15,7 +15,7 @@ class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 1; // Empezamos en Detection
 
   final List<Widget> _screens = [
-    const DashboardScreen(),
+    const MapScreen(),
     const DetectionScreen(),
     const HistoryScreen(),
     const SettingsScreen(),
@@ -35,8 +35,8 @@ class _MainScreenState extends State<MainScreen> {
         type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard),
-            label: 'Dashboard',
+            icon: Icon(Icons.map),
+            label: 'Map',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.sensors),
