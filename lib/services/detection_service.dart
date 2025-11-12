@@ -1,69 +1,128 @@
+// services/detection_service.dart
 import 'package:sensors_plus/sensors_plus.dart';
-import 'dart:math';
+import 'dart:async';
 import '../models/driving_event.dart';
 import 'mqtt_service.dart';
-import 'data_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
-/// Servicio encargado de la lógica de detección de eventos peligrosos
+/// Servicio para detectar eventos de conducción basados en sensores
 class DetectionService {
+  // Singleton pattern
+  static final DetectionService _instance = DetectionService._internal();
+  factory DetectionService() => _instance;
+  DetectionService._internal();
+
+  // Servicio MQTT
   final MqttService _mqttService = MqttService();
-  final DataService _dataService = DataService();
   
-  // Umbrales de detección (pueden ser configurables desde Settings)
-  double hardBrakeThreshold = 30.0;
-  double hardAccelThreshold = 30.0;
-  double sharpTurnThreshold = 25.0;
-  double speedLimitKmh = 80.0;
-
-  String? _userId;
-  DateTime? _lastEventTime;
-  final int _minEventIntervalMs = 1000; // Mínimo 1 segundo entre eventos
-
-  /// Inicializa el servicio de detección
+  // Umbrales configurables
+  double _hardBrakeThreshold = 30.0; // m/s²
+  double _hardAccelThreshold = 30.0; // m/s²
+  double _sharpTurnThreshold = 25.0; // m/s²
+  double _speedLimit = 80.0; // km/h
+  
+  // Control de eventos para evitar spam
+  DateTime? _lastHardBrakeEvent;
+  DateTime? _lastHardAccelEvent;
+  DateTime? _lastSharpTurnEvent;
+  DateTime? _lastSpeedingEvent;
+  final int _minEventIntervalMs = 3000; // 3 segundos entre eventos del mismo tipo
+  
+  // Estado de conexión MQTT
+  bool _isMqttConnected = false;
+  Function(bool)? _connectionCallback;
+  
+  // Historial de eventos
+  final List<DrivingEvent> _events = [];
+  
+  /// Inicializa el servicio y conecta a MQTT
   Future<void> initialize() async {
-    // Obtener ID de usuario
-    _userId = await _dataService.getUserId();
-    if (_userId == null) {
-      // Generar un ID único si no existe
-      _userId = 'user_${DateTime.now().millisecondsSinceEpoch}';
-      await _dataService.saveUserId(_userId!);
-    }
+    print('🚀 Inicializando DetectionService...');
     
-    // Conectar al broker MQTT (sin bloquear si falla)
-    _mqttService.connect().catchError((error) {
-      print('⚠️ MQTT no disponible, continuando en modo offline');
-    });
+    // Configurar callback de conexión MQTT
+    _mqttService.onConnectionChanged = (isConnected) {
+      _isMqttConnected = isConnected;
+      _connectionCallback?.call(isConnected);
+      print('📡 MQTT Estado: ${isConnected ? "Conectado" : "Desconectado"}');
+    };
+    
+    // Intentar conectar a MQTT
+    final connected = await _mqttService.connect();
+    _isMqttConnected = connected;
+    
+    print('✅ DetectionService inicializado. MQTT: ${connected ? "OK" : "Offline"}');
   }
-
-  /// Detecta eventos basándose en los datos del acelerómetro
+  
+  /// Actualiza los umbrales de detección
+  void updateThresholds({
+    required double hardBrake,
+    required double hardAccel,
+    required double sharpTurn,
+    required double speedLimit,
+  }) {
+    _hardBrakeThreshold = hardBrake;
+    _hardAccelThreshold = hardAccel;
+    _sharpTurnThreshold = sharpTurn;
+    _speedLimit = speedLimit;
+    
+    print('⚙️ Umbrales actualizados:');
+    print('   Hard Brake: $_hardBrakeThreshold m/s²');
+    print('   Hard Accel: $_hardAccelThreshold m/s²');
+    print('   Sharp Turn: $_sharpTurnThreshold m/s²');
+    print('   Speed Limit: $_speedLimit km/h');
+  }
+  
+  /// Detecta eventos basados en datos del acelerómetro
   String? detectEvents(AccelerometerEvent event) {
-    // Detectar frenada brusca (aceleración negativa fuerte en Y)
-    if (event.y < -hardBrakeThreshold) {
-      return 'Frenada Brusca';
+    final now = DateTime.now();
+    
+    // Detectar frenada brusca (aceleración negativa en Y)
+    if (event.y < -_hardBrakeThreshold) {
+      if (_canRegisterEvent(_lastHardBrakeEvent, now)) {
+        _lastHardBrakeEvent = now;
+        return 'hard_brake';
+      }
     }
     
-    // Detectar aceleración repentina (aceleración positiva fuerte en Y)
-    if (event.y > hardAccelThreshold) {
-      return 'Aceleración Repentina';
+    // Detectar aceleración fuerte (aceleración positiva en Y)
+    if (event.y > _hardAccelThreshold) {
+      if (_canRegisterEvent(_lastHardAccelEvent, now)) {
+        _lastHardAccelEvent = now;
+        return 'hard_accel';
+      }
     }
     
-    // Detectar giro fuerte (aceleración lateral fuerte en X)
-    if (event.x.abs() > sharpTurnThreshold) {
-      return 'Giro Fuerte';
+    // Detectar giro cerrado (aceleración lateral en X)
+    if (event.x.abs() > _sharpTurnThreshold) {
+      if (_canRegisterEvent(_lastSharpTurnEvent, now)) {
+        _lastSharpTurnEvent = now;
+        return 'sharp_turn';
+      }
     }
     
     return null;
   }
-
-  /// Verifica si se está excediendo el límite de velocidad
+  
+  /// Verifica velocidad y detecta exceso
   String? checkSpeed(double speedKmh) {
-    if (speedKmh > speedLimitKmh) {
-      return 'Exceso de Velocidad';
+    if (speedKmh > _speedLimit) {
+      final now = DateTime.now();
+      if (_canRegisterEvent(_lastSpeedingEvent, now)) {
+        _lastSpeedingEvent = now;
+        return 'speeding';
+      }
     }
     return null;
   }
-
-  /// Registra el evento (MQTT + almacenamiento local)
+  
+  /// Verifica si puede registrar un evento (evita spam)
+  bool _canRegisterEvent(DateTime? lastEvent, DateTime now) {
+    if (lastEvent == null) return true;
+    final diff = now.difference(lastEvent).inMilliseconds;
+    return diff >= _minEventIntervalMs;
+  }
+  
+  /// Registra un evento de conducción
   Future<void> logEvent(
     String eventType,
     double accelX,
@@ -73,30 +132,10 @@ class DetectionService {
     double longitude,
     double speed,
   ) async {
-    // Filtrar eventos muy frecuentes
-    final now = DateTime.now();
-    if (_lastEventTime != null) {
-      final diff = now.difference(_lastEventTime!).inMilliseconds;
-      if (diff < _minEventIntervalMs) {
-        // Ignorar evento si fue hace menos de 1 segundo
-        return;
-      }
-    }
-    _lastEventTime = now;
-
-    print('=== Evento Detectado ===');
-    print('Tipo: $eventType');
-    print('Acelerómetro - X: $accelX, Y: $accelY, Z: $accelZ');
-    print('GPS - Lat: $latitude, Lon: $longitude');
-    print('Velocidad: $speed km/h');
-    print('Timestamp: $now');
-    print('========================');
-    
-    // Crear objeto DrivingEvent
     final event = DrivingEvent(
-      id: 'evt_${now.millisecondsSinceEpoch}',
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
       type: eventType,
-      timestamp: now,
+      timestamp: DateTime.now(),
       latitude: latitude,
       longitude: longitude,
       speed: speed,
@@ -105,70 +144,120 @@ class DetectionService {
       accelZ: accelZ,
     );
     
-    // Guardar localmente
-    await _dataService.saveEvent(event);
+    // Agregar al historial local
+    _events.add(event);
     
-    // Enviar al broker MQTT solo si está conectado
-    if (_mqttService.isConnected && _userId != null) {
-      try {
-        await _mqttService.publishEvent(
-          userId: _userId!,
-          eventType: eventType,
-          accelX: accelX,
-          accelY: accelY,
-          accelZ: accelZ,
-          latitude: latitude,
-          longitude: longitude,
-          speed: speed,
-        );
-      } catch (e) {
-        print('⚠️ Error al publicar en MQTT: $e');
-      }
+    // Limitar historial a últimos 100 eventos
+    if (_events.length > 100) {
+      _events.removeAt(0);
+    }
+    
+    print('📝 Evento registrado: $eventType');
+    
+    // Intentar enviar a MQTT si está conectado
+    if (_isMqttConnected) {
+      await _publishToMqtt(event);
+    } else {
+      print('📴 Evento guardado solo localmente (MQTT offline)');
     }
   }
-
-  /// Actualiza los umbrales de detección
-  void updateThresholds({
-    double? hardBrake,
-    double? hardAccel,
-    double? sharpTurn,
-    double? speedLimit,
-  }) {
-    if (hardBrake != null) hardBrakeThreshold = hardBrake;
-    if (hardAccel != null) hardAccelThreshold = hardAccel;
-    if (sharpTurn != null) sharpTurnThreshold = sharpTurn;
-    if (speedLimit != null) speedLimitKmh = speedLimit;
+  
+  /// Publica evento a MQTT
+  Future<void> _publishToMqtt(DrivingEvent event) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        print('⚠️ No hay usuario autenticado para enviar a MQTT');
+        return;
+      }
+      
+      await _mqttService.publishEvent(
+        userId: user.uid,
+        eventType: event.type,
+        accelX: event.accelX,
+        accelY: event.accelY,
+        accelZ: event.accelZ,
+        latitude: event.latitude,
+        longitude: event.longitude,
+        speed: event.speed,
+      );
+      
+      print('📤 Evento enviado a MQTT: ${event.type}');
+    } catch (e) {
+      print('❌ Error al enviar evento a MQTT: $e');
+    }
   }
-
-  /// Publica estadísticas periódicas
-  Future<void> publishStats() async {
-    if (!_mqttService.isConnected || _userId == null) return;
-    
-    final stats = await _dataService.getStats();
-    final eventsByType = Map<String, int>.from(
-      stats.map((key, value) => MapEntry(
-        key,
-        value is int ? value : 0,
-      ))..remove('total')..remove('lastUpdate')
-    );
-    
-    await _mqttService.publishStats(
-      userId: _userId!,
-      totalEvents: stats['total'] ?? 0,
-      eventsByType: eventsByType,
-    );
-  }
-
-  /// Desconecta del broker MQTT
-  void disconnect() {
-    _mqttService.disconnect();
-  }
-
-  /// Getter para estado de conexión MQTT
-  bool get isMqttConnected => _mqttService.isConnected;
-
+  
   /// Configura callback para cambios de conexión MQTT
   void setConnectionCallback(Function(bool) callback) {
-    _mqttService.onConnectionChanged = callback;
+    _connectionCallback = callback;
+  }
+  
+  /// Obtiene el estado de conexión MQTT
+  bool get isMqttConnected => _isMqttConnected;
+  
+  /// Obtiene el historial de eventos
+  List<DrivingEvent> get events => List.unmodifiable(_events);
+  
+  /// Limpia el historial de eventos
+  void clearEvents() {
+    _events.clear();
+    print('🗑️ Historial de eventos limpiado');
+  }
+  
+  /// Obtiene estadísticas de eventos
+  Map<String, int> getEventStatistics() {
+    final stats = <String, int>{
+      'hard_brake': 0,
+      'hard_accel': 0,
+      'sharp_turn': 0,
+      'speeding': 0,
+    };
+    
+    for (final event in _events) {
+      stats[event.type] = (stats[event.type] ?? 0) + 1;
+    }
+    
+    return stats;
+  }
+  
+  /// Publica estadísticas a MQTT
+  Future<void> publishStatistics() async {
+    if (!_isMqttConnected) {
+      print('📴 No se pueden publicar estadísticas (MQTT offline)');
+      return;
+    }
+    
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+      
+      final stats = getEventStatistics();
+      
+      await _mqttService.publishStats(
+        userId: user.uid,
+        totalEvents: _events.length,
+        eventsByType: stats,
+      );
+      
+      print('📊 Estadísticas publicadas a MQTT');
+    } catch (e) {
+      print('❌ Error al publicar estadísticas: $e');
+    }
+  }
+  
+  /// Reconecta a MQTT
+  Future<bool> reconnectMqtt() async {
+    print('🔄 Intentando reconectar a MQTT...');
+    _mqttService.disconnect();
+    await Future.delayed(const Duration(seconds: 1));
+    return await _mqttService.connect();
+  }
+  
+  /// Cierra conexiones y limpia recursos
+  void dispose() {
+    _mqttService.disconnect();
+    _events.clear();
+    print('🛑 DetectionService cerrado');
   }
 }

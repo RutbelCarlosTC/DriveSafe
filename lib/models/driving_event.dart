@@ -1,4 +1,5 @@
 /// Modelo de datos para un evento de conducción
+/// models/driving_event.dart
 class DrivingEvent {
   final String id;
   final String type; // 'hard_brake', 'hard_accel', 'sharp_turn', 'speeding'
