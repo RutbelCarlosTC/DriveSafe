@@ -4,6 +4,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/detection_service.dart';
 import '../services/mqtt_service.dart';
 
+
+///TODO
+///+ Verificar el broker y su funcionamiento 
+///+ boton log out
+///+ guardar configuraciones con shared preferences
+
 /// Pantalla de configuración de la aplicación
 /// Permite ajustar umbrales de detección y configuración MQTT
 class SettingsScreen extends StatefulWidget {
