@@ -3,6 +3,7 @@ import 'package:sensors_plus/sensors_plus.dart';
 import 'dart:async';
 import '../models/driving_event.dart';
 import 'mqtt_service.dart';
+import 'data_service.dart'; // 👈 AGREGAR ESTE IMPORT
 import 'package:firebase_auth/firebase_auth.dart';
 
 /// Servicio para detectar eventos de conducción basados en sensores
@@ -12,21 +13,22 @@ class DetectionService {
   factory DetectionService() => _instance;
   DetectionService._internal();
 
-  // Servicio MQTT
+  // Servicios
   final MqttService _mqttService = MqttService();
+  final DataService _dataService = DataService(); // 👈 AGREGAR ESTA LÍNEA
   
   // Umbrales configurables
-  double _hardBrakeThreshold = 30.0; // m/s²
-  double _hardAccelThreshold = 30.0; // m/s²
-  double _sharpTurnThreshold = 25.0; // m/s²
-  double _speedLimit = 80.0; // km/h
+  double _hardBrakeThreshold = 30.0;
+  double _hardAccelThreshold = 30.0;
+  double _sharpTurnThreshold = 25.0;
+  double _speedLimit = 80.0;
   
   // Control de eventos para evitar spam
   DateTime? _lastHardBrakeEvent;
   DateTime? _lastHardAccelEvent;
   DateTime? _lastSharpTurnEvent;
   DateTime? _lastSpeedingEvent;
-  final int _minEventIntervalMs = 3000; // 3 segundos entre eventos del mismo tipo
+  final int _minEventIntervalMs = 3000;
   
   // Estado de conexión MQTT
   bool _isMqttConnected = false;
@@ -80,7 +82,7 @@ class DetectionService {
     if (event.y < -_hardBrakeThreshold) {
       if (_canRegisterEvent(_lastHardBrakeEvent, now)) {
         _lastHardBrakeEvent = now;
-        return 'hard_brake';
+        return 'Frenada Brusca';
       }
     }
     
@@ -88,7 +90,7 @@ class DetectionService {
     if (event.y > _hardAccelThreshold) {
       if (_canRegisterEvent(_lastHardAccelEvent, now)) {
         _lastHardAccelEvent = now;
-        return 'hard_accel';
+        return 'Aceleración Repentina';
       }
     }
     
@@ -96,7 +98,7 @@ class DetectionService {
     if (event.x.abs() > _sharpTurnThreshold) {
       if (_canRegisterEvent(_lastSharpTurnEvent, now)) {
         _lastSharpTurnEvent = now;
-        return 'sharp_turn';
+        return 'Giro Fuerte';
       }
     }
     
@@ -109,7 +111,7 @@ class DetectionService {
       final now = DateTime.now();
       if (_canRegisterEvent(_lastSpeedingEvent, now)) {
         _lastSpeedingEvent = now;
-        return 'speeding';
+        return 'Exceso de Velocidad';
       }
     }
     return null;
@@ -144,7 +146,7 @@ class DetectionService {
       accelZ: accelZ,
     );
     
-    // Agregar al historial local
+    // Agregar al historial local en memoria
     _events.add(event);
     
     // Limitar historial a últimos 100 eventos
@@ -154,11 +156,14 @@ class DetectionService {
     
     print('📝 Evento registrado: $eventType');
     
+    // 👇 GUARDAR EN SQLITE (BASE DE DATOS LOCAL)
+    await _dataService.saveEvent(event);
+    
     // Intentar enviar a MQTT si está conectado
     if (_isMqttConnected) {
       await _publishToMqtt(event);
     } else {
-      print('📴 Evento guardado solo localmente (MQTT offline)');
+      print('🔴 Evento guardado solo localmente (MQTT offline)');
     }
   }
   
@@ -208,10 +213,10 @@ class DetectionService {
   /// Obtiene estadísticas de eventos
   Map<String, int> getEventStatistics() {
     final stats = <String, int>{
-      'hard_brake': 0,
-      'hard_accel': 0,
-      'sharp_turn': 0,
-      'speeding': 0,
+      'Frenada Brusca': 0,
+      'Aceleración Repentina': 0,
+      'Giro Fuerte': 0,
+      'Exceso de Velocidad': 0,
     };
     
     for (final event in _events) {
@@ -224,7 +229,7 @@ class DetectionService {
   /// Publica estadísticas a MQTT
   Future<void> publishStatistics() async {
     if (!_isMqttConnected) {
-      print('📴 No se pueden publicar estadísticas (MQTT offline)');
+      print('🔴 No se pueden publicar estadísticas (MQTT offline)');
       return;
     }
     
