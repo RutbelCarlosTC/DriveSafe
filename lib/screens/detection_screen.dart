@@ -36,6 +36,11 @@ class _DetectionScreenState extends State<DetectionScreen> {
   // Control de eventos
   DateTime? _lastEventTime;
   final int _minEventIntervalMs = 1000;
+  
+  // Control de alerta visible
+  bool _showAlert = false;
+  String _currentAlertEvent = '';
+  Timer? _alertTimer;
 
   @override
   void initState() {
@@ -128,6 +133,9 @@ class _DetectionScreenState extends State<DetectionScreen> {
       _eventCount++;
     });
     
+    // Mostrar alerta en la UI
+    _showDangerousAlert(eventType);
+    
     _detectionService.logEvent(
       eventType, 
       _accelX, 
@@ -137,6 +145,23 @@ class _DetectionScreenState extends State<DetectionScreen> {
       _longitude, 
       _speed
     );
+  }
+
+  void _showDangerousAlert(String eventType) {
+    _alertTimer?.cancel();
+    
+    setState(() {
+      _showAlert = true;
+      _currentAlertEvent = eventType;
+    });
+    
+    _alertTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _showAlert = false;
+        });
+      }
+    });
   }
 
   void _stopDetection() {
@@ -153,421 +178,352 @@ class _DetectionScreenState extends State<DetectionScreen> {
   void dispose() {
     _accelerometerSubscription?.cancel();
     _positionSubscription?.cancel();
+    _alertTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
         title: const Text(
-          'Detection',
-          style: TextStyle(color: Colors.black, fontWeight: FontWeight.w600),
+          'Detección',
+          style: TextStyle(
+            color: Colors.black87,
+            fontWeight: FontWeight.w600,
+            fontSize: 18,
+          ),
         ),
+        centerTitle: true,
         actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: _isMqttConnected 
-                  ? Colors.green.withOpacity(0.1) 
-                  : Colors.grey.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _isMqttConnected ? Icons.cloud_done : Icons.cloud_off,
-                  color: _isMqttConnected ? Colors.green : Colors.grey,
-                  size: 16,
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  _isMqttConnected ? 'MQTT' : 'Offline',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: _isMqttConnected ? Colors.green : Colors.grey,
-                  ),
-                ),
-              ],
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Icon(
+              _isMqttConnected ? Icons.cloud_done : Icons.cloud_off,
+              color: _isMqttConnected ? Colors.green : Colors.grey[400],
+              size: 22,
             ),
           ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
         child: Column(
           children: [
-            // ========== BOTÓN PRINCIPAL ==========
-            SizedBox(
-              width: double.infinity,
-              height: 60,
-              child: ElevatedButton.icon(
-                onPressed: _isDetecting ? _stopDetection : _startDetection,
-                icon: Icon(
-                  _isDetecting ? Icons.stop : Icons.play_arrow,
-                  color: Colors.white,
-                  size: 28,
-                ),
-                label: Text(
-                  _isDetecting ? 'DETENER DETECCIÓN' : 'INICIAR DETECCIÓN',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _isDetecting 
-                      ? Colors.red 
-                      : const Color(0xFF2E4374),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  elevation: 0,
-                ),
-              ),
-            ),
-            
-            const SizedBox(height: 20),
-            
-            // ========== ESTADO DE DETECCIÓN ==========
-            _buildSectionCard(
-              icon: _isDetecting ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-              iconColor: _isDetecting ? Colors.green : Colors.grey,
-              title: 'Estado',
-              children: [
-                _buildStatusRow(
-                  label: 'Estado actual',
-                  value: _isDetecting ? 'DETECTANDO' : 'INACTIVO',
-                  valueColor: _isDetecting ? Colors.green : Colors.grey,
-                  isBold: true,
-                ),
-                const SizedBox(height: 12),
-                _buildStatusRow(
-                  label: 'Eventos detectados',
-                  value: '$_eventCount',
-                  valueColor: Colors.blue,
-                ),
-                const SizedBox(height: 12),
-                _buildStatusRow(
-                  label: 'Último evento',
-                  value: _lastEvent,
-                  valueColor: Colors.black87,
-                  isMultiline: true,
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: _isMqttConnected 
-                        ? Colors.green.shade50 
-                        : Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: _isMqttConnected 
-                          ? Colors.green.shade200 
-                          : Colors.orange.shade200,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _isMqttConnected ? Icons.sync : Icons.sync_disabled,
-                        size: 20,
-                        color: _isMqttConnected ? Colors.green : Colors.orange,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        _isMqttConnected ? 'Sincronizando con servidor' : 'Guardando solo localmente',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: _isMqttConnected ? Colors.green.shade800 : Colors.orange.shade800,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            
-            const SizedBox(height: 20),
-            
-            // ========== ACELERÓMETRO ==========
-            _buildSectionCard(
-              icon: Icons.speed,
-              iconColor: Colors.blue,
-              title: 'Acelerómetro',
-              children: [
-                _buildSensorRow(
-                  label: 'Eje X',
-                  value: _accelX,
-                  unit: 'm/s²',
-                  color: Colors.red,
-                ),
-                const SizedBox(height: 12),
-                _buildSensorRow(
-                  label: 'Eje Y',
-                  value: _accelY,
-                  unit: 'm/s²',
-                  color: Colors.green,
-                ),
-                const SizedBox(height: 12),
-                _buildSensorRow(
-                  label: 'Eje Z',
-                  value: _accelZ,
-                  unit: 'm/s²',
-                  color: Colors.purple,
-                ),
-                const SizedBox(height: 16),
-                // Barra de progreso de aceleración Y
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Intensidad (Eje Y)',
-                          style: TextStyle(fontSize: 13, color: Colors.black54),
-                        ),
-                        Text(
-                          '${(_accelY.abs() / 40.0 * 100).round()}%',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: _accelY.abs() > 30 ? Colors.red : Colors.blue,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: LinearProgressIndicator(
-                        value: (_accelY.abs() / 40.0).clamp(0.0, 1.0),
-                        backgroundColor: Colors.grey[200],
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          _accelY.abs() > 30 ? Colors.red : Colors.blue,
-                        ),
-                        minHeight: 8,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            
-            const SizedBox(height: 20),
-            
-            // ========== GPS ==========
-            _buildSectionCard(
-              icon: Icons.location_on,
-              iconColor: Colors.deepOrange,
-              title: 'GPS',
-              children: [
-                _buildGpsRow(
-                  icon: Icons.my_location,
-                  label: 'Latitud',
-                  value: _latitude.toStringAsFixed(6),
-                ),
-                const SizedBox(height: 12),
-                _buildGpsRow(
-                  icon: Icons.place,
-                  label: 'Longitud',
-                  value: _longitude.toStringAsFixed(6),
-                ),
-                const SizedBox(height: 12),
-                _buildGpsRow(
-                  icon: Icons.speed,
-                  label: 'Velocidad',
-                  value: '${_speed.toStringAsFixed(1)} km/h',
-                  valueColor: _speed > 80 ? Colors.red : Colors.green,
-                ),
-              ],
-            ),
-            
-            const SizedBox(height: 20),
-            
-            // ========== INFORMACIÓN ==========
+            // Velocímetro circular
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(32),
               decoration: BoxDecoration(
-                color: Colors.blue.shade50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.blue.shade200),
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    blurRadius: 20,
+                    spreadRadius: 5,
+                  ),
+                ],
               ),
-              child: Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.info_outline, color: Colors.blue.shade700, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Umbrales: Aceleración ±30 m/s² • Giros ±25 m/s² • Velocidad 80 km/h',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.blue.shade800,
-                      ),
+                  // Indicador vertical (simulando aguja)
+                  Container(
+                    width: 6,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      color: _speed > 80 ? const Color(0xFFFF5757) : const Color(0xFFFF9F43),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Velocidad
+                  Text(
+                    '${_speed.toInt()}',
+                    style: TextStyle(
+                      fontSize: 64,
+                      fontWeight: FontWeight.w300,
+                      color: _speed > 80 ? const Color(0xFFFF5757) : Colors.black87,
+                      height: 1,
+                    ),
+                  ),
+                  const Text(
+                    'km/h',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.black45,
+                      fontWeight: FontWeight.w400,
                     ),
                   ),
                 ],
               ),
             ),
             
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
+            
+            const Text(
+              'Velocidad actual',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.black45,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+            
+            const SizedBox(height: 24),
+            
+            // Alerta de conducción peligrosa
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              height: _showAlert ? null : 0,
+              curve: Curves.easeInOut,
+              child: _showAlert
+                  ? Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF5757),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFFFF5757).withOpacity(0.3),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.warning_rounded,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  'Conducción Peligrosa Detectada',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _currentAlertEvent,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            
+            // Sección de Aceleración
+            _buildMinimalSection(
+              title: 'Aceleración',
+              children: [
+                _buildAccelCard('X', _accelX, const Color(0xFF4ECDC4)),
+                const SizedBox(height: 12),
+                _buildAccelCard('Y', _accelY, const Color(0xFFFF9F43)),
+                const SizedBox(height: 12),
+                _buildAccelCard('Z', _accelZ, const Color(0xFF95E1D3)),
+              ],
+            ),
+            
+            const SizedBox(height: 32),
+            
+            // Botón de control
+            SizedBox(
+              width: double.infinity,
+              height: 56,
+              child: ElevatedButton(
+                onPressed: _isDetecting ? _stopDetection : _startDetection,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _isDetecting 
+                      ? const Color(0xFFFF5757) 
+                      : const Color(0xFF2E4374),
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                child: Text(
+                  _isDetecting ? 'DETENER DETECCIÓN' : 'INICIAR DETECCIÓN',
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ),
+            
+            const SizedBox(height: 24),
+            
+            // Stats minimalistas
+            if (_isDetecting)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildStatItem('Eventos', '$_eventCount'),
+                  Container(width: 1, height: 30, color: Colors.grey[200]),
+                  _buildStatItem('Estado', _isMqttConnected ? 'Sync' : 'Local'),
+                ],
+              ),
           ],
         ),
       ),
     );
   }
   
-  /// Widget para una tarjeta de sección
-  Widget _buildSectionCard({
-    required IconData icon,
-    required Color iconColor,
+  Widget _buildMinimalSection({
     required String title,
     required List<Widget> children,
   }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 16),
+          child: Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+        ),
+        ...children,
+      ],
+    );
+  }
+  
+  Widget _buildAccelCard(String axis, double value, Color color) {
+    final isHigh = value.abs() > 25;
+    
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isHigh ? color.withOpacity(0.5) : Colors.grey[200]!,
+          width: isHigh ? 2 : 1,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            blurRadius: 8,
+            color: Colors.grey.withOpacity(0.05),
+            blurRadius: 10,
             offset: const Offset(0, 2),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: iconColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, color: iconColor, size: 20),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 16,
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                axis,
+                style: TextStyle(
+                  color: color,
                   fontWeight: FontWeight.w600,
+                  fontSize: 16,
                 ),
               ),
-            ],
+            ),
           ),
-          const SizedBox(height: 16),
-          ...children,
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${value.toStringAsFixed(2)} m/s²',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: isHigh ? color : Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Eje $axis',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[500],
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Barra de intensidad
+          Container(
+            width: 4,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.grey[200],
+              borderRadius: BorderRadius.circular(2),
+            ),
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: FractionallySizedBox(
+                heightFactor: (value.abs() / 40.0).clamp(0.0, 1.0),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: isHigh ? const Color(0xFFFF5757) : color,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
   
-  /// Widget para fila de estado
-  Widget _buildStatusRow({
-    required String label,
-    required String value,
-    required Color valueColor,
-    bool isBold = false,
-    bool isMultiline = false,
-  }) {
-    return Row(
-      crossAxisAlignment: isMultiline ? CrossAxisAlignment.start : CrossAxisAlignment.center,
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  Widget _buildStatItem(String label, String value) {
+    return Column(
       children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 14, color: Colors.black54),
-        ),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            value,
-            style: TextStyle(
-              fontSize: isBold ? 16 : 14,
-              fontWeight: isBold ? FontWeight.w700 : FontWeight.w600,
-              color: valueColor,
-            ),
-            textAlign: TextAlign.right,
-          ),
-        ),
-      ],
-    );
-  }
-  
-  /// Widget para fila de sensor
-  Widget _buildSensorRow({
-    required String label,
-    required double value,
-    required String unit,
-    required Color color,
-  }) {
-    return Row(
-      children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 14, color: Colors.black54),
-          ),
-        ),
-        Text(
-          '${value.toStringAsFixed(2)} $unit',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: color,
-          ),
-        ),
-      ],
-    );
-  }
-  
-  /// Widget para fila de GPS
-  Widget _buildGpsRow({
-    required IconData icon,
-    required String label,
-    required String value,
-    Color? valueColor,
-  }) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: Colors.deepOrange.shade300),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 14, color: Colors.black54),
-          ),
-        ),
         Text(
           value,
-          style: TextStyle(
-            fontSize: 14,
+          style: const TextStyle(
+            fontSize: 20,
             fontWeight: FontWeight.w600,
-            color: valueColor ?? Colors.black87,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey[500],
+            fontWeight: FontWeight.w400,
           ),
         ),
       ],
