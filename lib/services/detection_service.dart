@@ -1,61 +1,55 @@
-// services/detection_service.dart
+// services/detection_service.dart (ACTUALIZADO)
 import 'package:sensors_plus/sensors_plus.dart';
 import 'dart:async';
 import '../models/driving_event.dart';
 import 'mqtt_service.dart';
-import 'data_service.dart'; // 👈 AGREGAR ESTE IMPORT
+import 'data_service.dart';
+import 'firebase_service.dart'; // 👈 NUEVO
 import 'package:firebase_auth/firebase_auth.dart';
 
-/// Servicio para detectar eventos de conducción basados en sensores
 class DetectionService {
-  // Singleton pattern
   static final DetectionService _instance = DetectionService._internal();
   factory DetectionService() => _instance;
   DetectionService._internal();
 
-  // Servicios
   final MqttService _mqttService = MqttService();
-  final DataService _dataService = DataService(); // 👈 AGREGAR ESTA LÍNEA
+  final DataService _dataService = DataService();
+  final FirebaseService _firebaseService = FirebaseService(); // 👈 NUEVO
   
-  // Umbrales configurables
   double _hardBrakeThreshold = 30.0;
   double _hardAccelThreshold = 30.0;
   double _sharpTurnThreshold = 25.0;
   double _speedLimit = 80.0;
   
-  // Control de eventos para evitar spam
   DateTime? _lastHardBrakeEvent;
   DateTime? _lastHardAccelEvent;
   DateTime? _lastSharpTurnEvent;
   DateTime? _lastSpeedingEvent;
   final int _minEventIntervalMs = 3000;
   
-  // Estado de conexión MQTT
   bool _isMqttConnected = false;
   Function(bool)? _connectionCallback;
   
-  // Historial de eventos
   final List<DrivingEvent> _events = [];
-  
-  /// Inicializa el servicio y conecta a MQTT
+
   Future<void> initialize() async {
     print('🚀 Inicializando DetectionService...');
     
-    // Configurar callback de conexión MQTT
     _mqttService.onConnectionChanged = (isConnected) {
       _isMqttConnected = isConnected;
       _connectionCallback?.call(isConnected);
       print('📡 MQTT Estado: ${isConnected ? "Conectado" : "Desconectado"}');
     };
     
-    // Intentar conectar a MQTT
     final connected = await _mqttService.connect();
     _isMqttConnected = connected;
     
-    print('✅ DetectionService inicializado. MQTT: ${connected ? "OK" : "Offline"}');
+    // 👇 NUEVA: Sincronización automática al iniciar
+    await _firebaseService.syncPendingEvents();
+    
+    print('✅ DetectionService inicializado');
   }
   
-  /// Actualiza los umbrales de detección
   void updateThresholds({
     required double hardBrake,
     required double hardAccel,
@@ -66,19 +60,11 @@ class DetectionService {
     _hardAccelThreshold = hardAccel;
     _sharpTurnThreshold = sharpTurn;
     _speedLimit = speedLimit;
-    
-    print('⚙️ Umbrales actualizados:');
-    print('   Hard Brake: $_hardBrakeThreshold m/s²');
-    print('   Hard Accel: $_hardAccelThreshold m/s²');
-    print('   Sharp Turn: $_sharpTurnThreshold m/s²');
-    print('   Speed Limit: $_speedLimit km/h');
   }
   
-  /// Detecta eventos basados en datos del acelerómetro
   String? detectEvents(AccelerometerEvent event) {
     final now = DateTime.now();
     
-    // Detectar frenada brusca (aceleración negativa en Y)
     if (event.y < -_hardBrakeThreshold) {
       if (_canRegisterEvent(_lastHardBrakeEvent, now)) {
         _lastHardBrakeEvent = now;
@@ -86,7 +72,6 @@ class DetectionService {
       }
     }
     
-    // Detectar aceleración fuerte (aceleración positiva en Y)
     if (event.y > _hardAccelThreshold) {
       if (_canRegisterEvent(_lastHardAccelEvent, now)) {
         _lastHardAccelEvent = now;
@@ -94,7 +79,6 @@ class DetectionService {
       }
     }
     
-    // Detectar giro cerrado (aceleración lateral en X)
     if (event.x.abs() > _sharpTurnThreshold) {
       if (_canRegisterEvent(_lastSharpTurnEvent, now)) {
         _lastSharpTurnEvent = now;
@@ -105,7 +89,6 @@ class DetectionService {
     return null;
   }
   
-  /// Verifica velocidad y detecta exceso
   String? checkSpeed(double speedKmh) {
     if (speedKmh > _speedLimit) {
       final now = DateTime.now();
@@ -117,14 +100,13 @@ class DetectionService {
     return null;
   }
   
-  /// Verifica si puede registrar un evento (evita spam)
   bool _canRegisterEvent(DateTime? lastEvent, DateTime now) {
     if (lastEvent == null) return true;
     final diff = now.difference(lastEvent).inMilliseconds;
     return diff >= _minEventIntervalMs;
   }
   
-  /// Registra un evento de conducción
+  /// 👇 MÉTODO ACTUALIZADO con sincronización a Firebase
   Future<void> logEvent(
     String eventType,
     double accelX,
@@ -146,35 +128,35 @@ class DetectionService {
       accelZ: accelZ,
     );
     
-    // Agregar al historial local en memoria
     _events.add(event);
-    
-    // Limitar historial a últimos 100 eventos
     if (_events.length > 100) {
       _events.removeAt(0);
     }
     
     print('📝 Evento registrado: $eventType');
     
-    // 👇 GUARDAR EN SQLITE (BASE DE DATOS LOCAL)
+    // 1️⃣ Guardar en SQLite (siempre)
     await _dataService.saveEvent(event);
     
-    // Intentar enviar a MQTT si está conectado
+    // 2️⃣ Intentar guardar en Firebase
+    final savedToCloud = await _firebaseService.saveEventToCloud(event);
+    
+    if (savedToCloud) {
+      print('☁️ Evento sincronizado con Firebase');
+    } else {
+      print('📴 Evento guardado solo localmente (se sincronizará después)');
+    }
+    
+    // 3️⃣ Publicar a MQTT si está conectado
     if (_isMqttConnected) {
       await _publishToMqtt(event);
-    } else {
-      print('🔴 Evento guardado solo localmente (MQTT offline)');
     }
   }
   
-  /// Publica evento a MQTT
   Future<void> _publishToMqtt(DrivingEvent event) async {
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        print('⚠️ No hay usuario autenticado para enviar a MQTT');
-        return;
-      }
+      if (user == null) return;
       
       await _mqttService.publishEvent(
         userId: user.uid,
@@ -193,24 +175,18 @@ class DetectionService {
     }
   }
   
-  /// Configura callback para cambios de conexión MQTT
   void setConnectionCallback(Function(bool) callback) {
     _connectionCallback = callback;
   }
   
-  /// Obtiene el estado de conexión MQTT
   bool get isMqttConnected => _isMqttConnected;
-  
-  /// Obtiene el historial de eventos
   List<DrivingEvent> get events => List.unmodifiable(_events);
   
-  /// Limpia el historial de eventos
   void clearEvents() {
     _events.clear();
     print('🗑️ Historial de eventos limpiado');
   }
   
-  /// Obtiene estadísticas de eventos
   Map<String, int> getEventStatistics() {
     final stats = <String, int>{
       'Frenada Brusca': 0,
@@ -226,12 +202,8 @@ class DetectionService {
     return stats;
   }
   
-  /// Publica estadísticas a MQTT
   Future<void> publishStatistics() async {
-    if (!_isMqttConnected) {
-      print('🔴 No se pueden publicar estadísticas (MQTT offline)');
-      return;
-    }
+    if (!_isMqttConnected) return;
     
     try {
       final user = FirebaseAuth.instance.currentUser;
@@ -251,7 +223,6 @@ class DetectionService {
     }
   }
   
-  /// Reconecta a MQTT
   Future<bool> reconnectMqtt() async {
     print('🔄 Intentando reconectar a MQTT...');
     _mqttService.disconnect();
@@ -259,7 +230,6 @@ class DetectionService {
     return await _mqttService.connect();
   }
   
-  /// Cierra conexiones y limpia recursos
   void dispose() {
     _mqttService.disconnect();
     _events.clear();
