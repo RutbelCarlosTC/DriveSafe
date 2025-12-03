@@ -1,10 +1,11 @@
-// services/detection_service.dart (ACTUALIZADO)
+// services/detection_service.dart (ACTUALIZADO CON DETECCIÓN EN SEGUNDO PLANO)
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:geolocator/geolocator.dart';
 import 'dart:async';
 import '../models/driving_event.dart';
 import 'mqtt_service.dart';
 import 'data_service.dart';
-import 'firebase_service.dart'; // 👈 NUEVO
+import 'firebase_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class DetectionService {
@@ -14,7 +15,7 @@ class DetectionService {
 
   final MqttService _mqttService = MqttService();
   final DataService _dataService = DataService();
-  final FirebaseService _firebaseService = FirebaseService(); // 👈 NUEVO
+  final FirebaseService _firebaseService = FirebaseService();
   
   double _hardBrakeThreshold = 30.0;
   double _hardAccelThreshold = 30.0;
@@ -31,6 +32,26 @@ class DetectionService {
   Function(bool)? _connectionCallback;
   
   final List<DrivingEvent> _events = [];
+  
+  // ============ DETECCIÓN EN SEGUNDO PLANO ============
+  StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
+  StreamSubscription<Position>? _positionSubscription;
+  bool _isDetecting = false;
+  
+  // Callbacks para actualizar UI
+  Function(double x, double y, double z)? _accelCallback;
+  Function(double lat, double lon, double speed)? _gpsCallback;
+  Function(String eventType)? _eventCallback;
+  
+  // Últimos valores conocidos
+  double _lastAccelX = 0.0;
+  double _lastAccelY = 0.0;
+  double _lastAccelZ = 0.0;
+  double _lastLat = 0.0;
+  double _lastLon = 0.0;
+  double _lastSpeed = 0.0;
+  
+  bool get isDetecting => _isDetecting;
 
   Future<void> initialize() async {
     print('🚀 Inicializando DetectionService...');
@@ -44,7 +65,6 @@ class DetectionService {
     final connected = await _mqttService.connect();
     _isMqttConnected = connected;
     
-    // 👇 NUEVA: Sincronización automática al iniciar
     await _firebaseService.syncPendingEvents();
     
     print('✅ DetectionService inicializado');
@@ -106,7 +126,6 @@ class DetectionService {
     return diff >= _minEventIntervalMs;
   }
   
-  /// 👇 MÉTODO ACTUALIZADO con sincronización a Firebase
   Future<void> logEvent(
     String eventType,
     double accelX,
@@ -135,19 +154,16 @@ class DetectionService {
     
     print('📝 Evento registrado: $eventType');
     
-    // 1️⃣ Guardar en SQLite (siempre)
     await _dataService.saveEvent(event);
     
-    // 2️⃣ Intentar guardar en Firebase
     final savedToCloud = await _firebaseService.saveEventToCloud(event);
     
     if (savedToCloud) {
-      print('☁️ Evento sincronizado con Firebase');
+      print('☁️ Evento sincronizado con Firebase automáticamente');
     } else {
-      print('📴 Evento guardado solo localmente (se sincronizará después)');
+      print('📴 Guardado localmente (se sincronizará después)');
     }
     
-    // 3️⃣ Publicar a MQTT si está conectado
     if (_isMqttConnected) {
       await _publishToMqtt(event);
     }
@@ -177,6 +193,18 @@ class DetectionService {
   
   void setConnectionCallback(Function(bool) callback) {
     _connectionCallback = callback;
+  }
+  
+  void setAccelCallback(Function(double, double, double)? callback) {
+    _accelCallback = callback;
+  }
+  
+  void setGpsCallback(Function(double, double, double)? callback) {
+    _gpsCallback = callback;
+  }
+  
+  void setEventCallback(Function(String)? callback) {
+    _eventCallback = callback;
   }
   
   bool get isMqttConnected => _isMqttConnected;
@@ -230,7 +258,84 @@ class DetectionService {
     return await _mqttService.connect();
   }
   
+  // ============ MÉTODOS DE DETECCIÓN EN SEGUNDO PLANO ============
+  
+  Future<void> startDetection() async {
+    if (_isDetecting) {
+      print('⚠️ La detección ya está activa');
+      return;
+    }
+    
+    print('▶️ Iniciando detección en segundo plano...');
+    _isDetecting = true;
+    
+    // Stream del acelerómetro
+    _accelerometerSubscription = accelerometerEvents.listen((AccelerometerEvent event) {
+      _lastAccelX = event.x;
+      _lastAccelY = event.y;
+      _lastAccelZ = event.z;
+      
+      _accelCallback?.call(event.x, event.y, event.z);
+      
+      final detectedEvent = detectEvents(event);
+      if (detectedEvent != null) {
+        _eventCallback?.call(detectedEvent);
+        
+        logEvent(
+          detectedEvent,
+          event.x, event.y, event.z,
+          _lastLat, _lastLon, _lastSpeed
+        );
+      }
+    });
+    
+    // Stream de GPS
+    LocationSettings locationSettings = const LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 10,
+    );
+    
+    _positionSubscription = Geolocator.getPositionStream(
+      locationSettings: locationSettings
+    ).listen((position) {
+      _lastLat = position.latitude;
+      _lastLon = position.longitude;
+      _lastSpeed = position.speed * 3.6;
+      
+      _gpsCallback?.call(_lastLat, _lastLon, _lastSpeed);
+      
+      final speedEvent = checkSpeed(_lastSpeed);
+      if (speedEvent != null) {
+        _eventCallback?.call(speedEvent);
+        
+        logEvent(
+          speedEvent,
+          _lastAccelX, _lastAccelY, _lastAccelZ,
+          _lastLat, _lastLon, _lastSpeed
+        );
+      }
+    });
+    
+    print('✅ Detección activada (funciona en segundo plano)');
+  }
+  
+  void stopDetection() {
+    if (!_isDetecting) return;
+    
+    print('⏸️ Deteniendo detección...');
+    _isDetecting = false;
+    
+    _accelerometerSubscription?.cancel();
+    _positionSubscription?.cancel();
+    
+    _accelerometerSubscription = null;
+    _positionSubscription = null;
+    
+    print('✅ Detección detenida');
+  }
+  
   void dispose() {
+    stopDetection();
     _mqttService.disconnect();
     _events.clear();
     print('🛑 DetectionService cerrado');

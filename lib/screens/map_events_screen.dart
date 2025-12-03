@@ -32,6 +32,7 @@ class _MapEventsScreenState extends State<MapEventsScreen> {
   void initState() {
     super.initState();
     _getCurrentLocation();
+    _startLocationUpdates(); // Actualizar ubicación en tiempo real
     _listenToFirestoreEvents();
   }
 
@@ -124,6 +125,29 @@ class _MapEventsScreenState extends State<MapEventsScreen> {
           isLoading = false;
         });
       }
+    }
+  }
+
+  // Actualizar ubicación en tiempo real
+  void _startLocationUpdates() {
+    Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10, // Actualizar cada 10 metros
+      ),
+    ).listen((Position position) {
+      if (mounted) {
+        setState(() {
+          myPosition = LatLng(position.latitude, position.longitude);
+        });
+      }
+    });
+  }
+
+  // Centrar mapa en ubicación actual
+  void _centerOnMyLocation() {
+    if (myPosition != null) {
+      _mapController.move(myPosition!, 18.0);
     }
   }
 
@@ -424,6 +448,14 @@ class _MapEventsScreenState extends State<MapEventsScreen> {
                   heroTag: 'fit_all',
                   onPressed: _fitAllEvents,
                   child: const Icon(Icons.fit_screen),
+                ),
+                const SizedBox(height: 16),
+                // Botón para centrar en ubicación actual
+                FloatingActionButton.small(
+                  heroTag: 'my_location',
+                  backgroundColor: Colors.blue,
+                  onPressed: _centerOnMyLocation,
+                  child: const Icon(Icons.my_location, color: Colors.white),
                 ),
               ],
             ),
