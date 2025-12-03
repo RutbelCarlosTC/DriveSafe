@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/driving_event.dart';
 import '../services/data_service.dart';
 import '../services/firebase_service.dart';
+import 'map_screen.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({Key? key}) : super(key: key);
